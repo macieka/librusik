@@ -8,7 +8,9 @@ set -xe
 WINE_PYTHON="$HOME/.wine/drive_c/users/`whoami`/AppData/Local/Programs/Python/Python*/python.exe"
 WINE_PYINSTALLER="$HOME/.wine/drive_c/users/`whoami`/AppData/Local/Programs/Python/Python*/Scripts/pyinstaller.exe"
 
-collect_data=`cut -f1 -d= < ./requirements.txt | xargs printf '--collect-data %s '`
+# apprise loads its notification plugins dynamically, pyinstaller needs --collect-all to see them
+collect_data=`cut -f1 -d'=' < ./requirements.txt | grep -v '^apprise$' | xargs printf '--collect-data %s '`
+collect_data="$collect_data --collect-all apprise"
 collect_files=`find ./lib ./static ./html -type f -exec sh -c 'printf -- "--add-data %s;%s " {} $(dirname {} | sed s!\./!!)' ';'`
 # ↑ shellcheck płacze teehee :3333
 

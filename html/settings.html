@@ -126,6 +126,21 @@
 		</div>
 		<div class="check %s"></div>
 	</button>
+	<button class="option checkbox" id="notif-toggle-btn" onclick="toggleNotif(this)">
+		<div class="icon">notifications</div>
+		<div>
+			<div class="title">Message notifications</div>
+			<div class="subtitle">Get pinged when a new message arrives.</div>
+		</div>
+		<div class="check %s"></div>
+	</button>
+	<button class="option" onclick="showdiv('features', 'notifsettings')">
+		<div class="icon">notification_add</div>
+		<div>
+			<div class="title">Notification destination</div>
+			<div class="subtitle">Telegram, ntfy or Discord.</div>
+		</div>
+	</button>
 	<button class="option" onclick="restartApp()">
 		<div class="icon">restart_alt</div>
 		<div>
@@ -190,4 +205,19 @@
 	<div class="icon ssvg">done</div>
 	<div class="success" id="succname"></div>
 	<div class="suggestion" id="succdesc"></div>
+</div>
+<div class="hidden" id="notifsettings" style="display:none">
+	<button class="back" onclick="showdiv('notifsettings', 'features', true)"></button>
+	<div class="header">Notification destination</div>
+	<div class="subheader">Where new Librus messages get sent.</div>
+	<input id="notif-url-input" type="text" placeholder="e.g. tgram://bottoken/chatid" maxlength="512" value="%s"><br>
+	<button onclick="saveNotifUrl()" class="highlighted">Save</button>
+	<button onclick="testNotif(this)">Send a test</button>
+	<div class="suggestion" id="notif-info" style="margin-top:12px">%s</div>
+	<div class="brighten" style="font-size:0.85em;margin-top:8px;text-align:left">
+		<b>Telegram</b> &mdash; <code>tgram://bottoken/chatid</code>. Talk to <a href="https://t.me/botfather" target="_blank">@BotFather</a> for the token. Point it at a group chat to notify several people at once.<br><br>
+		<b>ntfy</b> &mdash; <code>ntfy://topic</code>. Pick a hard-to-guess topic, then subscribe to it in the ntfy app. Anyone subscribed gets the message.<br><br>
+		<b>Discord</b> &mdash; <code>discord://webhook_id/webhook_token</code>, from the channel's Integrations settings.<br><br>
+		Full syntax is in the <a href="https://github.com/caronc/apprise/wiki" target="_blank">Apprise wiki</a>. Allowed here: <code>%s</code>.
+	</div>
 </div>

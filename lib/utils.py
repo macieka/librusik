@@ -8,6 +8,7 @@ import random
 import re
 import string
 import argparse
+from bs4 import BeautifulSoup
 from cryptography.fernet import Fernet
 from aiohttp import web
 from .wizard import setup_wizard
@@ -181,6 +182,32 @@ def parseDumbs(strink):
 	strink = strink.replace(">", "&gt;")
 	strink = strink.replace("\n", "<br>")
 	return strink
+
+def parseAttr(strink):
+	# parseDumbs for values that land inside an HTML attribute
+	strink = strink.replace("&", "&amp;")
+	strink = strink.replace("<", "&lt;")
+	strink = strink.replace(">", "&gt;")
+	strink = strink.replace('"', "&quot;")
+	strink = strink.replace("'", "&#39;")
+	return strink
+
+def htmlToText(html, limit = None):
+	# Synergia message bodies are HTML fragments, notifications want plain text
+	try:
+		soup = BeautifulSoup(html, "html.parser")
+		for tag in soup.find_all(["br", "p", "div", "tr", "li"]):
+			tag.insert_after("\n")
+		text = soup.get_text()
+	except:
+		text = html
+	text = re.sub(r"[^\S\n]+", " ", text)
+	text = "\n".join(line.strip() for line in text.split("\n"))
+	text = re.sub(r"\n{3,}", "\n\n", text).strip()
+	if limit and len(text) > limit:
+		text = text[:limit].rstrip() + "…"
+	return text
+
 
 def linkify(html_str):
 	html_str = html_str.replace("\n", "<br>")

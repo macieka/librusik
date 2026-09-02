@@ -18,6 +18,7 @@ from lib.api import SessionManager
 from lib.utils import *
 from shutil import copytree
 import atexit
+import apprise as apprise_lib
 
 # szczerze nie ma mam zielonego pojęca czemu to tutaj jest xD
 # cwd = os.getcwd()
@@ -49,8 +50,19 @@ CONFIG_DEFAULT = {
 		"plus": "To get, buy me a beer.",
 		"pro": "To get, solve the [puzzle](https://www.youtube.com/watch?v=dQw4w9WgXcQ)."
 	},
-	"debug": False
+	"debug": False,
+	"notif_enabled": True,
+	"notif_poll_interval": 3600,
+	"notif_active_from": 8,
+	"notif_active_to": 22,
+	"notif_body_length": 2000,
+	"notif_allowed_schemes": ["tgram", "ntfy", "ntfys", "discord", "json", "jsons"],
+	"notif_min_tier": "free"
 }
+
+# how many message links we remember per user, and the cap on the backoff multiplier
+NOTIF_SEEN_MAX = 200
+NOTIF_MAX_BACKOFF = 8
 
 
 config, database = setup(CONFIG_DEFAULT)
@@ -58,6 +70,27 @@ resources = load_html_resources(config)
 LIBRUSIK_PATH = os.path.dirname(os.path.abspath(__file__)) + "/"
 SESSIONS = SessionManager(database)
 BOOT = round(time.time())
+
+NOTIF_USER_DEFAULTS = {
+	"notif_enabled": False,
+	"notif_url": None,
+	"notif_seen": None,
+	"notif_last_ok": None,
+	"notif_last_error": None
+}
+
+for _mig_user in database:
+	for _mig_key in NOTIF_USER_DEFAULTS:
+		if _mig_key not in database[_mig_user]:
+			database[_mig_user][_mig_key] = NOTIF_USER_DEFAULTS[_mig_key]
+	# pre-seen-set databases only remembered the newest message link
+	if database[_mig_user]["notif_seen"] is None and database[_mig_user].get("notif_last_msg"):
+		database[_mig_user]["notif_seen"] = [database[_mig_user]["notif_last_msg"]]
+	database[_mig_user].pop("notif_last_msg", None)
+
+# username -> unix ts of the next allowed poll, and consecutive failure count
+NOTIF_DUE = {}
+NOTIF_FAILS = {}
 
 
 async def updatetitles():
@@ -71,6 +104,188 @@ async def updatetitles():
 			librus.REQUESTS = [0] * 7
 		welcome = random.choice(welcomes)
 		greeting = random.choice(greetings)
+		await asyncio.sleep(60)
+
+
+def notif_settings_of(username):
+	user = database[username]
+	return {
+		"notif_enabled": user.get("notif_enabled", False),
+		"notif_url": user.get("notif_url"),
+		"notif_last_ok": user.get("notif_last_ok"),
+		"notif_last_error": user.get("notif_last_error"),
+		"notif_status": notif_status_text(username)
+	}
+
+
+def notif_status_text(username):
+	user = database[username]
+	if not user.get("notif_url"):
+		return "No destination set yet."
+	if user.get("notif_last_error"):
+		return "Last attempt failed: %s" % user["notif_last_error"]
+	if user.get("notif_last_ok"):
+		return "Last checked %s." % user["notif_last_ok"]
+	return "Waiting for the first check."
+
+
+def notif_debug():
+	if config.get("debug"):
+		traceback.print_exc()
+
+
+def notif_url_ok(url):
+	# users can make the server talk to arbitrary hosts, so keep the schemes on a leash
+	if not isinstance(url, str) or not url.strip():
+		return False, "URL is empty."
+	if len(url) > 512:
+		return False, "URL is too long."
+	scheme = url.split("://")[0].lower() if "://" in url else ""
+	allowed = [s.lower() for s in config.get("notif_allowed_schemes") or []]
+	if allowed and scheme not in allowed:
+		return False, "Scheme '%s' is not allowed here. Allowed: %s." % (scheme or "?", ", ".join(allowed))
+	try:
+		if not apprise_lib.Apprise().add(url):
+			return False, "Apprise could not parse this URL."
+	except:
+		notif_debug()
+		return False, "Apprise could not parse this URL."
+	return True, None
+
+
+async def send_notification(url, title, body):
+	try:
+		apobj = apprise_lib.Apprise()
+		if not apobj.add(url):
+			return False, "Apprise could not parse this URL."
+		if not await apobj.async_notify(title = title, body = body):
+			return False, "Delivery failed, check the token / topic."
+		return True, None
+	except Exception as e:
+		notif_debug()
+		return False, str(e) or e.__class__.__name__
+
+
+def notif_record(username, ok, error = None):
+	if username not in database:
+		return
+	if ok:
+		database[username]["notif_last_ok"] = datetime.now().strftime("%d %b %Y, %H:%M")
+		database[username]["notif_last_error"] = None
+		NOTIF_FAILS[username] = 0
+	else:
+		database[username]["notif_last_error"] = error
+		NOTIF_FAILS[username] = NOTIF_FAILS.get(username, 0) + 1
+	updatedb()
+
+
+def notif_within_hours(now = None):
+	now = now or datetime.now()
+	start = int(config.get("notif_active_from", 8))
+	end = int(config.get("notif_active_to", 22))
+	if start == end:
+		return True
+	if start < end:
+		return start <= now.hour < end
+	# window wrapping past midnight, e.g. 22 -> 6
+	return now.hour >= start or now.hour < end
+
+
+def notif_reschedule(username):
+	interval = max(60, int(config.get("notif_poll_interval", 3600)))
+	fails = NOTIF_FAILS.get(username, 0)
+	if fails:
+		interval *= min(2 ** (fails - 1), NOTIF_MAX_BACKOFF)
+	# jitter keeps every user from hitting Synergia in the same second
+	NOTIF_DUE[username] = time.time() + interval + random.randint(0, 300)
+
+
+async def poll_user(username):
+	user = database.get(username)
+	if not user:
+		return
+	url = user.get("notif_url")
+	lib = Librus(SESSIONS.get(username))
+	try:
+		if not await lib.mktoken(user["l_login"], decrypt(user["l_passwd"])):
+			notif_record(username, False, "Librus login failed.")
+			return
+		SESSIONS.save(username, lib.headers)
+		msgs = await lib.get_messages()
+	except:
+		notif_debug()
+		notif_record(username, False, "Could not reach Synergia.")
+		return
+	if not msgs:
+		notif_record(username, False, "Synergia returned an empty inbox.")
+		return
+	links = [m["link"] for m in msgs]
+	keep = max(NOTIF_SEEN_MAX, len(links))
+	seen = user.get("notif_seen")
+	if seen is None:
+		# first poll: remember what is already in the inbox instead of blasting it out
+		database[username]["notif_seen"] = links[:keep]
+		notif_record(username, True)
+		return
+	new_msgs = [m for m in msgs if m["link"] not in seen]
+	if not new_msgs:
+		notif_record(username, True)
+		return
+	limit = int(config.get("notif_body_length", 2000))
+	delivered = []
+	ok_all = True
+	error = None
+	for m in reversed(new_msgs):  # oldest first
+		body = m["subject"]
+		if limit > 0:
+			try:
+				full = await lib.get_message(m["link"])
+				content = htmlToText(full.get("content") or "", limit)
+				if content and full.get("from") != "nobody":
+					body = "%s\n\n%s" % (m["subject"], content)
+			except:
+				notif_debug()
+		ok, error = await send_notification(url, "Librus: new message from %s" % m["from"], body)
+		if not ok:
+			# transport is down, leave the rest unseen so the next poll retries them
+			ok_all = False
+			break
+		delivered.append(m["link"])
+	if delivered:
+		database[username]["notif_seen"] = (delivered[::-1] + list(seen))[:keep]
+	notif_record(username, ok_all, None if ok_all else error)
+
+
+async def notification_poller():
+	await asyncio.sleep(15)
+	while True:
+		try:
+			if config.get("notif_enabled", True) and notif_within_hours():
+				now = time.time()
+				due = []
+				for username in list(database.keys()):
+					user = database[username]
+					if not user.get("notif_enabled") or not user.get("notif_url"):
+						continue
+					if not check_tier(username, config.get("notif_min_tier", "free")):
+						continue
+					if username not in NOTIF_DUE:
+						NOTIF_DUE[username] = now + random.randint(0, 300)
+						continue
+					if NOTIF_DUE[username] > now:
+						continue
+					due.append(username)
+				if due:
+					sem = asyncio.Semaphore(3)
+					async def run(u):
+						try:
+							async with sem:
+								await poll_user(u)
+						finally:
+							notif_reschedule(u)
+					await asyncio.gather(*[run(u) for u in due], return_exceptions = True)
+		except:
+			notif_debug()
 		await asyncio.sleep(60)
 
 
@@ -158,6 +373,8 @@ async def mkaccount(data):
 		database[data["username"]]["grades_cleanup"] = False
 		database[data["username"]]["attendances_cleanup"] = False
 		database[data["username"]]["confetti"] = False
+		for notif_key in NOTIF_USER_DEFAULTS:
+			database[data["username"]][notif_key] = NOTIF_USER_DEFAULTS[notif_key]
 		database[data["username"]]["tier"] = TIERS[0]
 		database[data["username"]]["joined"] = datetime.now().strftime('%d %b %Y')
 		timgs = glob("static/img/profile/*")
@@ -200,7 +417,7 @@ async def api(request):
 	global database, LAST_SEEN_PEPS
 	try:
 		data = await request.json()
-		if "method" in data and data["method"] in ["mkaccount", "delaccount", "chgpasswd", "chglibrus", "chglibruspasswd", "getstuff", "grades_cleanup", "attendances_cleanup", "confetti", "get_me", "get_notifications"]:
+		if "method" in data and data["method"] in ["mkaccount", "delaccount", "chgpasswd", "chglibrus", "chglibruspasswd", "getstuff", "grades_cleanup", "attendances_cleanup", "confetti", "get_me", "get_notifications", "set_notifications", "get_notif_settings", "test_notification"]:
 			method = data["method"]
 			if method == "mkaccount":
 				if not config["enable_registration"]:
@@ -266,6 +483,41 @@ async def api(request):
 						database[data["username"]]["attendances_cleanup"] = data["value"]
 						updatedb()
 						return response("", 200)
+				elif method == "get_notif_settings":
+					return JSONresponse(notif_settings_of(data["username"]), 200)
+				elif method == "set_notifications":
+					user = database[data["username"]]
+					if "notif_url" in data:
+						url = data["notif_url"]
+						if url is None or (isinstance(url, str) and not url.strip()):
+							user["notif_url"] = None
+							user["notif_enabled"] = False
+						else:
+							ok, err = notif_url_ok(url)
+							if not ok:
+								return JSONresponse({"error": err}, 400)
+							if url != user.get("notif_url"):
+								# a new destination starts with a clean error state
+								user["notif_last_error"] = None
+								NOTIF_FAILS[data["username"]] = 0
+							user["notif_url"] = url
+					if "notif_enabled" in data and isinstance(data["notif_enabled"], bool):
+						if data["notif_enabled"] and not user.get("notif_url"):
+							return JSONresponse({"error": "Set a notification URL first."}, 400)
+						if data["notif_enabled"] and not check_tier(data["username"], config.get("notif_min_tier", "free")):
+							return JSONresponse({"error": "Your tier does not include notifications."}, 403)
+						user["notif_enabled"] = data["notif_enabled"]
+					updatedb()
+					return JSONresponse(notif_settings_of(data["username"]), 200)
+				elif method == "test_notification":
+					url = database[data["username"]].get("notif_url")
+					if not url:
+						return JSONresponse({"error": "Set a notification URL first."}, 400)
+					ok, err = await send_notification(url, "Librusik", "This is a test notification. If you can read this, it works.")
+					notif_record(data["username"], ok, err)
+					if not ok:
+						return JSONresponse({"error": err}, 502)
+					return JSONresponse(notif_settings_of(data["username"]), 200)
 				elif method == "chglibrus":
 					if "newLibrusLogin" in data and "newLibrusPassword" in data and isinstance(data["newLibrusLogin"], str) and isinstance(data["newLibrusPassword"], str):
 						data["librusLogin"] = data["newLibrusLogin"]
@@ -554,12 +806,18 @@ async def settings(request):
 			confeti = ""
 			if database[data["username"]]["confetti"]:
 				confeti = "ed"
+			notif_on = ""
+			if database[data["username"]].get("notif_enabled"):
+				notif_on = "ed"
+			notif_url_val = parseAttr(database[data["username"]].get("notif_url") or "")
+			notif_status = parseDumbs(notif_status_text(data["username"]))
+			notif_schemes = parseDumbs(", ".join(config.get("notif_allowed_schemes") or ["any"]))
 			showupgrade = ""
 			if database[data["username"]]["tier"] == "pro":
 				showupgrade = "display:none"
 			tiers = (linkify(config["tiers_requirements"]["free"]), linkify(config["tiers_requirements"]["plus"]), linkify(config["tiers_requirements"]["pro"]), config["tiers_text"])
 			abouts = resources["about"] % parseContact(config["contact_uri"])
-			return response(resources["settings"] % (f + database[data["username"]]["profile_pic"], database[data["username"]]["first_name"], database[data["username"]]["last_name"], data["username"], showupgrade, resources["tiers"] % tiers, abouts, imgs, parseDumbs(database[data["username"]]["l_login"]), parseDumbs(decrypt(database[data["username"]]["l_passwd"])), confeti, grades_cleanup, atends_cleanup), 200)
+			return response(resources["settings"] % (f + database[data["username"]]["profile_pic"], database[data["username"]]["first_name"], database[data["username"]]["last_name"], data["username"], showupgrade, resources["tiers"] % tiers, abouts, imgs, parseDumbs(database[data["username"]]["l_login"]), parseDumbs(decrypt(database[data["username"]]["l_passwd"])), confeti, grades_cleanup, atends_cleanup, notif_on, notif_url_val, notif_status, notif_schemes), 200)
 		return response("", 401)
 	except:
 		tr = copyable_tr(traceback.format_exc().replace(LIBRUSIK_PATH, ""))
@@ -1287,6 +1545,7 @@ else:
 	tasks.append(web._run_app(app, host=config["listen_address"], port = config["port"]))
 
 tasks.append(updatetitles())
+tasks.append(notification_poller())
 
 
 async def main():

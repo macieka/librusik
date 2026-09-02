@@ -670,6 +670,72 @@ function featureTile(elem, action) {
 		}, function(data) {});
 	}, 1500);
 }
+function notifInfo(text, isError) {
+	var info = getByID("notif-info");
+	if (!info) return;
+	info.innerText = text;
+	if (isError) info.classList.add("err");
+	else info.classList.remove("err");
+}
+function notifError(thys) {
+	try {
+		return JSON.parse(thys.responseText)["error"];
+	}
+	catch (e) {
+		return "Something went wrong.";
+	}
+}
+function toggleNotif(elem) {
+	var cokie = getCookie();
+	var check = elem.getElementsByClassName("check")[0];
+	var enabling = !check.classList.contains("ed");
+	checkbox(elem);
+	post("api", {
+		"method": "set_notifications",
+		"username": cokie["username"],
+		"password": cokie["password"],
+		"notif_enabled": enabling
+	}, function(thys) {
+		if (thys.status != 200) {
+			checkbox(elem);
+			notifInfo(notifError(thys), true);
+		}
+	});
+}
+function saveNotifUrl() {
+	var cokie = getCookie();
+	var url = getByID("notif-url-input").value.trim();
+	buttons(false);
+	notifInfo("Saving...");
+	post("api", {
+		"method": "set_notifications",
+		"username": cokie["username"],
+		"password": cokie["password"],
+		"notif_url": url || null
+	}, function(thys) {
+		buttons();
+		if (thys.status != 200) return notifInfo(notifError(thys), true);
+		var resp = JSON.parse(thys.responseText);
+		var check = getByID("notif-toggle-btn").getElementsByClassName("check")[0];
+		if (resp["notif_enabled"]) check.classList.add("ed");
+		else check.classList.remove("ed");
+		notifInfo(url ? "Saved. Send a test to make sure it works." : "Destination cleared.");
+	});
+}
+function testNotif() {
+	var cokie = getCookie();
+	buttons(false);
+	notifInfo("Sending...");
+	post("api", {
+		"method": "test_notification",
+		"username": cokie["username"],
+		"password": cokie["password"]
+	}, function(thys) {
+		buttons();
+		if (thys.status != 200) return notifInfo(notifError(thys), true);
+		notifInfo("Sent. Check your Telegram / ntfy / Discord.");
+	}, 30);
+}
 function restartApp() {
 	document.body.style.opacity = 0;
 	buttons(false);
