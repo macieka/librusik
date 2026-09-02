@@ -80,27 +80,33 @@ __1. Create a bot.__ Open [@BotFather](https://t.me/botfather) in Telegram, send
 123456789:AAHfaKeToKeNfAkEtOkEnFaKeToKeN123
 ```
 
-__2. Say hi to your bot.__ Open the chat with your new bot and send it any message (`/start` is fine). A Telegram bot cannot message you first, so this step is required.
+__2. Say hi to your bot.__ Open the chat with your new bot and send it any message (`/start` is fine). **The bot will not reply** - there is no code behind it yet, and that is expected. A Telegram bot cannot message you first, so this step is what opens the chat.
 
-__3. Paste the URL into Librusik.__ Go to *Settings → Notification destination* and enter:
+__3. Find your chat ID.__ Open this in a browser, or:
 
-```
-tgram://123456789:AAHfaKeToKeNfAkEtOkEnFaKeToKeN123
-```
-
-That's it - with no chat ID, Librusik notifies whoever talked to the bot. Hit **Send a test** to confirm it works, then flip on **Message notifications** in *Settings*.
-
-__To notify several people instead:__ create a Telegram group, add your bot to it, send one message in the group, then find the group's chat ID (it starts with `-`) at:
-
-```
-https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"
 ```
 
-and use it as the target:
+Look for `"chat":{"id":123456789` - that number is your chat ID.
+
+__4. Paste the URL into Librusik.__ Go to *Settings → Notification destination* and enter the token and chat ID together:
+
+```
+tgram://123456789:AAHfaKeToKeNfAkEtOkEnFaKeToKeN123/987654321
+```
+
+Hit **Send a test** to confirm it works, then flip on **Message notifications** in *Settings*.
+
+__To notify several people:__ create a Telegram group, add your bot to it, send one message in the group, then take the group's chat ID from the same `getUpdates` call - it starts with `-`:
 
 ```
 tgram://123456789:AAHfaKeToKeNfAkEtOkEnFaKeToKeN123/-1001234567890
 ```
+
+> **Always include the chat ID.** Apprise also accepts a bare `tgram://<token>` and will auto-detect a chat, but it picks *the sender of the first pending update* - and every Telegram bot is publicly reachable, with no way to restrict who may message it. If a stranger writes to your bot first, your school messages get delivered to them. Auto-detection also breaks after about 24 hours, when Telegram discards the update it relies on. Fine for a quick test, wrong for something that runs for months.
+
+Your bot token is a credential - anyone who has it controls the bot. If it leaks, revoke it with `/revoke` in BotFather.
 
 ### ntfy
 
