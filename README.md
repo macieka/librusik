@@ -140,6 +140,8 @@ Notification behaviour is set instance-wide in `data/config.json`:
 | `notif_allowed_schemes` | `["tgram", "ntfy", "ntfys", "discord", "json", "jsons"]` | Which Apprise URL schemes users may save |
 | `notif_min_tier` | `"free"` | Minimum tier required, if tiers are enabled |
 
+The active hours use the **server's** local time. Under Docker that is UTC unless you set `TZ`, so `8`-`22` would silently mean 8-22 UTC - two hours off in Poland.
+
 **A word on `notif_allowed_schemes`:** a destination URL makes your server send an outbound request wherever it points. On an instance with users you don't personally trust, keep this list tight - removing `json`/`jsons` in particular stops users from aiming Librusik at arbitrary HTTP endpoints on your network.
 
 Librus doesn't offer any kind of push, so this is plain polling. Checking hourly is deliberate: log in too often and Librus may start rate-limiting or locking the account.
@@ -164,16 +166,20 @@ docker build -t librusik .
 The default port is **7777**. You need to map it to your host machine.
 
 ```bash
-docker run -d -p 7777:7777 --name librusik librusik
+docker run -d -p 7777:7777 -e TZ=Europe/Warsaw --name librusik librusik
 
 ```
+
+*Set `TZ` to your own timezone. Without it the container runs on UTC, which shifts the notification quiet hours and every timestamp shown to users.*
 
 *Note: If you want to persist your data (config & database) so it survives container restarts, mount the `/app/data` volume:*
 
 ```bash
-docker run -d -p 7777:7777 -v $(pwd)/data:/app/data --name librusik librusik
+docker run -d -p 7777:7777 -e TZ=Europe/Warsaw -v $(pwd)/data:/app/data --name librusik librusik
 
 ```
+
+*On Windows PowerShell, quote the volume so it stays one argument: `-v "${PWD}/data:/app/data"`. Unquoted, PowerShell splits it in two and Docker reports `invalid reference format`.*
 
 ### Docker Compose
 
@@ -186,6 +192,8 @@ services:
     container_name: librusik
     ports:
       - "7777:7777"
+    environment:
+      - TZ=Europe/Warsaw
     volumes:
         - ./data:/app/data
     #   - librusik-data:/app/data
