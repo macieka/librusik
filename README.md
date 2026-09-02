@@ -154,61 +154,47 @@ Librus doesn't offer any kind of push, so this is plain polling. Checking hourly
 
 ## Installation (Docker) 🐳
 
-If you prefer using Docker to keep your system clean, you can build and run Librusik using the included Dockerfile.
+### With Docker Compose (recommended)
 
-__1. Build the image:__
+A `docker-compose.yml` is included, so this is the whole setup:
+
+```bash
+docker compose up -d --build
+```
+
+It builds the image, publishes port 7777, mounts `./data` for your config and user database, restarts on boot, and sets the timezone.
+
+Change `TZ` in the file if you are not in Poland, or override it for one run:
+
+```bash
+TZ=Europe/Berlin docker compose up -d
+```
+
+Follow the logs with:
+
+```bash
+docker compose logs -f
+```
+
+After changing any code, re-run `docker compose up -d --build`. The source is baked into the image, so restarting alone keeps running the old version.
+
+### Without Compose
+
+Build the image:
+
 ```bash
 docker build -t librusik .
-
 ```
 
-**2. Run the container:**
-The default port is **7777**. You need to map it to your host machine.
-
-```bash
-docker run -d -p 7777:7777 -e TZ=Europe/Warsaw --name librusik librusik
-
-```
-
-*Set `TZ` to your own timezone. Without it the container runs on UTC, which shifts the notification quiet hours and every timestamp shown to users.*
-
-*Note: If you want to persist your data (config & database) so it survives container restarts, mount the `/app/data` volume:*
+Then run it, mounting `/app/data` so your config and database survive a restart:
 
 ```bash
 docker run -d -p 7777:7777 -e TZ=Europe/Warsaw -v $(pwd)/data:/app/data --name librusik librusik
-
 ```
 
-*On Windows PowerShell, quote the volume so it stays one argument: `-v "${PWD}/data:/app/data"`. Unquoted, PowerShell splits it in two and Docker reports `invalid reference format`.*
+Set `TZ` to your own timezone - without it the container runs on UTC, which shifts the notification quiet hours and every timestamp shown to users.
 
-### Docker Compose
-
-Alternatively, you can use `docker-compose`. Create a `docker-compose.yml` file in the project directory:
-
-```yaml
-services:
-  librusik:
-    image: librusik:latest
-    container_name: librusik
-    ports:
-      - "7777:7777"
-    environment:
-      - TZ=Europe/Warsaw
-    volumes:
-        - ./data:/app/data
-    #   - librusik-data:/app/data
-    restart: unless-stopped
-
-# volumes:
-#   librusik-data:
-```
-
-Then simply run:
-
-```bash
-docker compose up -d
-
-```
+*On Windows PowerShell, quote the volume so it stays a single argument: `-v "${PWD}/data:/app/data"`. Unquoted, PowerShell splits it in two and Docker reports `invalid reference format`.*
 
 Librusik is now running at [localhost:7777](http://localhost:7777).
 

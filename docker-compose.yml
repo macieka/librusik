@@ -1,0 +1,15 @@
+services:
+  librusik:
+    build: .
+    image: librusik:latest
+    container_name: librusik
+    ports:
+      - "7777:7777"
+    environment:
+      # without this the container runs on UTC, which shifts the notification
+      # quiet hours and every timestamp shown to users
+      - TZ=${TZ:-Europe/Warsaw}
+    volumes:
+      # config, user database and the Fernet key live here - keep it
+      - ./data:/app/data
+    restart: unless-stopped
