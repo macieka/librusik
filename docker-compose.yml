@@ -3,6 +3,10 @@ services:
     build: .
     image: librusik:latest
     container_name: librusik
+    # The image runs as uid 1000. A bind mount keeps the host's ownership, so
+    # ./data must be writable by that uid - `sudo chown -R 1000:1000 data`, or
+    # run as yourself with `PUID=$(id -u) PGID=$(id -g) docker compose up -d`.
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       - "7777:7777"
     environment:

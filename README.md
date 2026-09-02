@@ -178,6 +178,26 @@ docker compose logs -f
 
 After changing any code, re-run `docker compose up -d --build`. The source is baked into the image, so restarting alone keeps running the old version.
 
+#### Permission denied on `/app/data`
+
+```
+PermissionError: [Errno 13] Permission denied: '/app/data/profile_pics'
+```
+
+The container runs as uid **1000** for security, and a bind mount keeps whatever ownership the host directory has. If Docker created `./data` for you it belongs to `root`, so the app cannot write to it. Give it to uid 1000:
+
+```bash
+sudo chown -R 1000:1000 data && docker compose up -d
+```
+
+Or run the container as yourself instead, if `./data` is already yours:
+
+```bash
+PUID=$(id -u) PGID=$(id -g) docker compose up -d
+```
+
+Docker Desktop on Windows and macOS ignores Unix ownership on bind mounts, so this only shows up on Linux hosts.
+
 ### Without Compose
 
 Build the image:
