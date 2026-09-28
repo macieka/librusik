@@ -365,6 +365,13 @@ class FetchWeekTest(unittest.IsolatedAsyncioTestCase):
 			await fetch_week(FakeLibrus(week = {"Pages": {}}), WEEK)
 		self.assertEqual(str(cm.exception), MALFORMED)
 
+	async def test_week_failure_stops_before_other_requests(self):
+		lib = FakeLibrus(week = None)
+		with self.assertRaises(TimetableError) as cm:
+			await fetch_week(lib, WEEK)
+		self.assertEqual(str(cm.exception), UNREACHABLE)
+		self.assertEqual(lib.calls, ["Timetables?weekStart=2026-09-28"])
+
 
 if __name__ == "__main__":
 	unittest.main()
