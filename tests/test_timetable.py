@@ -1,7 +1,9 @@
+import os
+import tempfile
 import unittest
 from datetime import date, datetime
 
-from lib.timetable import MALFORMED, TimetableError, last_slot, needs_fetch, parse_week, target_week
+from lib.timetable import MALFORMED, TimetableError, delete_user, last_slot, load_week, needs_fetch, parse_week, save_week, target_week, user_dir
 
 
 HOURS = [12, 18]
@@ -234,6 +236,63 @@ class ParseWeekTest(unittest.TestCase):
 		response = week_response()
 		del response["Timetable"]["2026-09-28"][1][0]["HourFrom"]
 		self.assertMalformed(response)
+
+
+class StorageTest(unittest.TestCase):
+	FETCHED = datetime(2026, 9, 28, 12, 0, 4).astimezone()
+
+	def setUp(self):
+		self.tmp = tempfile.TemporaryDirectory()
+		self.base = self.tmp.name
+		self.dir = user_dir(self.base, "ola")
+
+	def tearDown(self):
+		self.tmp.cleanup()
+
+	def path(self):
+		return os.path.join(self.dir, "2026-09-28.json")
+
+	def test_round_trip(self):
+		lessons = parse_week(week_response(), WEEK, CLASSROOMS, SUBJECTS, TEACHERS)
+		save_week(self.dir, WEEK, lessons, self.FETCHED)
+		self.assertEqual(load_week(self.dir, WEEK), {
+			"week_start": "2026-09-28",
+			"fetched_at": self.FETCHED.isoformat(timespec = "seconds"),
+			"lessons": lessons,
+		})
+
+	def test_polish_characters_stored_as_is(self):
+		save_week(self.dir, WEEK, [{"subject": "Język polski"}], self.FETCHED)
+		with open(self.path(), encoding = "utf-8") as f:
+			self.assertIn("Język polski", f.read())
+
+	def test_missing_week_loads_as_none(self):
+		self.assertIsNone(load_week(self.dir, WEEK))
+
+	def test_failed_write_keeps_previous_file(self):
+		save_week(self.dir, WEEK, [], self.FETCHED)
+		with open(self.path(), "rb") as f:
+			before = f.read()
+		with self.assertRaises(TypeError):
+			save_week(self.dir, WEEK, [object()], self.FETCHED)
+		with open(self.path(), "rb") as f:
+			self.assertEqual(f.read(), before)
+		self.assertEqual(os.listdir(self.dir), ["2026-09-28.json"])
+
+	def test_unsafe_usernames_refused(self):
+		for name in ["", "../x", "Ola", "a/b", ".", None]:
+			with self.assertRaises(ValueError):
+				user_dir(self.base, name)
+
+	def test_delete_user(self):
+		save_week(self.dir, WEEK, [], self.FETCHED)
+		delete_user(self.base, "ola")
+		self.assertFalse(os.path.exists(self.dir))
+
+	def test_delete_user_without_data_or_with_unsafe_name(self):
+		delete_user(self.base, "nobody")
+		delete_user(self.base, "../etc")
+		self.assertTrue(os.path.isdir(self.base))
 
 
 if __name__ == "__main__":

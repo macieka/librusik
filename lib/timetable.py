@@ -3,6 +3,10 @@
 Standard library only, so it can be tested without the app's dependencies.
 Design: docs/superpowers/specs/2026-09-28-timetable-snapshots-design.md
 """
+import json
+import os
+import re
+import shutil
 from datetime import datetime, timedelta
 
 # from this hour on Friday the weekend is near enough to want next week
@@ -11,6 +15,12 @@ RETRY_SECONDS = 30 * 60
 
 MALFORMED = "Synergia returned an unexpected timetable."
 UNREACHABLE = "Could not reach Synergia."
+
+# same rule registration enforces; usernames become directory names
+USERNAME_RE = re.compile("[a-z0-9]+")
+
+
+
 
 
 class TimetableError(Exception):
@@ -117,3 +127,50 @@ def parse_week(timetable, week_start, classrooms, subjects, teachers):
 		raise TimetableError(MALFORMED)
 	lessons.sort(key = lambda lesson: (lesson["date"], lesson["start"]))
 	return lessons
+
+
+def user_dir(base, username):
+	if not isinstance(username, str) or not USERNAME_RE.fullmatch(username):
+		raise ValueError("unsafe username: %r" % (username,))
+	return os.path.join(base, username)
+
+
+def _week_path(directory, week_start):
+	return os.path.join(directory, "%s.json" % week_start.isoformat())
+
+
+def save_week(directory, week_start, lessons, fetched_at):
+	os.makedirs(directory, exist_ok = True)
+	path = _week_path(directory, week_start)
+	tmp = path + ".tmp"
+	snapshot = {
+		"week_start": week_start.isoformat(),
+		"fetched_at": fetched_at.isoformat(timespec = "seconds"),
+		"lessons": lessons
+	}
+	try:
+		with open(tmp, "w", encoding = "utf-8") as f:
+			json.dump(snapshot, f, ensure_ascii = False, indent = 2)
+		# a crash mid-write must never leave a truncated week in place
+		os.replace(tmp, path)
+	except:
+		if os.path.exists(tmp):
+			os.remove(tmp)
+		raise
+
+
+def load_week(directory, week_start):
+	try:
+		with open(_week_path(directory, week_start), encoding = "utf-8") as f:
+			return json.load(f)
+	except FileNotFoundError:
+		return None
+
+
+def delete_user(base, username):
+	try:
+		directory = user_dir(base, username)
+	except ValueError:
+		# nothing can have been stored under a name user_dir refuses
+		return
+	shutil.rmtree(directory, ignore_errors = True)
