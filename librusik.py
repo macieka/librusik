@@ -16,6 +16,7 @@ from lib.api import librus
 from lib.api import Librus
 from lib.api import SessionManager
 from lib.utils import *
+from lib.timetable import TimetableError, UNREACHABLE, RETRY_SECONDS, target_week, needs_fetch, fetch_week, save_week, user_dir, delete_user
 from shutil import copytree
 import atexit
 import apprise as apprise_lib
@@ -57,7 +58,9 @@ CONFIG_DEFAULT = {
 	"notif_active_to": 22,
 	"notif_body_length": 2000,
 	"notif_allowed_schemes": ["tgram", "ntfy", "ntfys", "discord", "json", "jsons"],
-	"notif_min_tier": "free"
+	"notif_min_tier": "free",
+	"timetable_enabled": True,
+	"timetable_hours": [12, 18]
 }
 
 # how many message links we remember per user, and the cap on the backoff multiplier
@@ -79,10 +82,18 @@ NOTIF_USER_DEFAULTS = {
 	"notif_last_error": None
 }
 
+TT_USER_DEFAULTS = {
+	"tt_last_ok": None,
+	"tt_last_error": None
+}
+
 for _mig_user in database:
 	for _mig_key in NOTIF_USER_DEFAULTS:
 		if _mig_key not in database[_mig_user]:
 			database[_mig_user][_mig_key] = NOTIF_USER_DEFAULTS[_mig_key]
+	for _mig_key in TT_USER_DEFAULTS:
+		if _mig_key not in database[_mig_user]:
+			database[_mig_user][_mig_key] = TT_USER_DEFAULTS[_mig_key]
 	# pre-seen-set databases only remembered the newest message link
 	if database[_mig_user]["notif_seen"] is None and database[_mig_user].get("notif_last_msg"):
 		database[_mig_user]["notif_seen"] = [database[_mig_user]["notif_last_msg"]]
@@ -91,6 +102,10 @@ for _mig_user in database:
 # username -> unix ts of the next allowed poll, and consecutive failure count
 NOTIF_DUE = {}
 NOTIF_FAILS = {}
+
+TIMETABLE_DIR = os.path.join(DATA_DIR, "timetables")
+# username -> unix ts before which a failed timetable fetch is not retried
+TT_RETRY = {}
 
 
 async def updatetitles():
@@ -283,6 +298,77 @@ async def notification_poller():
 								await poll_user(u)
 						finally:
 							notif_reschedule(u)
+					await asyncio.gather(*[run(u) for u in due], return_exceptions = True)
+		except:
+			notif_debug()
+		await asyncio.sleep(60)
+
+
+def tt_record(username, ok, error = None):
+	if username not in database:
+		return
+	if ok:
+		database[username]["tt_last_ok"] = datetime.now().astimezone().isoformat(timespec = "seconds")
+		database[username]["tt_last_error"] = None
+	else:
+		database[username]["tt_last_error"] = error
+	updatedb()
+
+
+async def fetch_timetable(username, now):
+	user = database.get(username)
+	if not user:
+		return True
+	try:
+		directory = user_dir(TIMETABLE_DIR, username)
+	except ValueError:
+		tt_record(username, False, "Unsupported username.")
+		return False
+	week = target_week(now)
+	lib = Librus(SESSIONS.get(username))
+	try:
+		if not await lib.mktoken(user["l_login"], decrypt(user["l_passwd"])):
+			tt_record(username, False, "Librus login failed.")
+			return False
+		SESSIONS.save(username, lib.headers)
+		lessons = await fetch_week(lib, week)
+	except TimetableError as e:
+		tt_record(username, False, str(e))
+		return False
+	if username not in database:
+		# deleted while we were talking to Synergia, don't resurrect the directory
+		return True
+	save_week(directory, week, lessons, datetime.now().astimezone())
+	tt_record(username, True)
+	return True
+
+
+async def timetable_poller():
+	await asyncio.sleep(20)
+	while True:
+		try:
+			if config.get("timetable_enabled", True):
+				now = datetime.now()
+				hours = config.get("timetable_hours") or [12, 18]
+				# one rule covers the 12:00/18:00 slots, catch-up after downtime and retries
+				due = [
+					u for u in list(database.keys())
+					if needs_fetch(database[u].get("tt_last_ok"), now, hours) and TT_RETRY.get(u, 0) <= time.time()
+				]
+				if due:
+					sem = asyncio.Semaphore(3)
+					async def run(u):
+						async with sem:
+							try:
+								ok = await fetch_timetable(u, now)
+							except:
+								notif_debug()
+								tt_record(u, False, UNREACHABLE)
+								ok = False
+						if ok:
+							TT_RETRY.pop(u, None)
+						else:
+							TT_RETRY[u] = time.time() + RETRY_SECONDS
 					await asyncio.gather(*[run(u) for u in due], return_exceptions = True)
 		except:
 			notif_debug()
@@ -560,6 +646,7 @@ async def api(request):
 					except FileNotFoundError:
 						pass
 					del database[data["username"]]
+					delete_user(TIMETABLE_DIR, data["username"])
 					updatedb()
 					SESSIONS.updatedb(database)
 					return response("", 200)
@@ -1362,6 +1449,7 @@ async def panelapi(request):
 							if database[data["username"]]["custom_pic"]:
 								os.remove("%s/%s" % (PROFILE_PIC_DIR, database[data["username"]]["custom_pic"]))
 							del database[data["username"]]
+							delete_user(TIMETABLE_DIR, data["username"])
 							updatedb()
 							return response("", 200)
 						return response("", 403)
@@ -1546,6 +1634,7 @@ else:
 
 tasks.append(updatetitles())
 tasks.append(notification_poller())
+tasks.append(timetable_poller())
 
 
 async def main():
