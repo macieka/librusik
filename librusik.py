@@ -16,7 +16,7 @@ from lib.api import librus
 from lib.api import Librus
 from lib.api import SessionManager
 from lib.utils import *
-from lib.timetable import TimetableError, UNREACHABLE, RETRY_SECONDS, target_week, needs_fetch, next_slot, fetch_week, save_week, user_dir, delete_user
+from lib.timetable import TimetableError, UNREACHABLE, RETRY_SECONDS, target_weeks, needs_fetch, next_slot, fetch_week, save_week, user_dir, delete_user
 from shutil import copytree
 import atexit
 import apprise as apprise_lib
@@ -328,21 +328,22 @@ async def fetch_timetable(username, now):
 	except ValueError:
 		tt_record(username, False, "Unsupported username.")
 		return "wait"
-	week = target_week(now)
+	weeks = target_weeks(now)
 	lib = Librus(SESSIONS.get(username))
 	try:
 		if not await lib.mktoken(user["l_login"], decrypt(user["l_passwd"])):
 			tt_record(username, False, "Librus login failed.")
 			return "wait"
 		SESSIONS.save(username, lib.headers)
-		lessons = await fetch_week(lib, week)
+		fetched = [(week, await fetch_week(lib, week)) for week in weeks]
 	except TimetableError as e:
 		tt_record(username, False, str(e))
 		return "retry"
 	if username not in database:
 		# deleted while we were talking to Synergia, don't resurrect the directory
 		return "ok"
-	save_week(directory, week, lessons, datetime.now().astimezone())
+	for week, lessons in fetched:
+		save_week(directory, week, lessons, datetime.now().astimezone())
 	tt_record(username, True)
 	return "ok"
 

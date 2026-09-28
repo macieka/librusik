@@ -24,11 +24,14 @@ class TimetableError(Exception):
 	"""A fetch failed; str(e) is what ends up in tt_last_error."""
 
 
-def target_week(now):
+def target_weeks(now):
+	# Mondays also fetch next week, so the regular week is visible early.
 	monday = now.date() - timedelta(days = now.weekday())
 	if now.weekday() >= 5 or (now.weekday() == 4 and now.hour >= NEXT_WEEK_FROM_FRIDAY_HOUR):
-		monday += timedelta(days = 7)
-	return monday
+		return [monday + timedelta(days = 7)]
+	if now.weekday() == 0:
+		return [monday, monday + timedelta(days = 7)]
+	return [monday]
 
 
 def last_slot(now, hours):

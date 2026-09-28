@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from datetime import date, datetime
 
-from lib.timetable import MALFORMED, UNREACHABLE, TimetableError, delete_user, fetch_week, last_slot, load_week, needs_fetch, next_slot, parse_week, save_week, target_week, user_dir
+from lib.timetable import MALFORMED, UNREACHABLE, TimetableError, delete_user, fetch_week, last_slot, load_week, needs_fetch, next_slot, parse_week, save_week, target_weeks, user_dir
 
 
 HOURS = [12, 18]
@@ -79,12 +79,18 @@ def empty_week():
 	return {"Timetable": {d: [] for d in ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"]}}
 
 
-class TargetWeekTest(unittest.TestCase):
-	def check(self, now, monday):
-		self.assertEqual(target_week(now), monday)
+class TargetWeeksTest(unittest.TestCase):
+	def check(self, now, *mondays):
+		self.assertEqual(target_weeks(now), list(mondays))
 
-	def test_monday_morning_is_current_week(self):
-		self.check(datetime(2026, 9, 28, 9, 0), date(2026, 9, 28))
+	def test_monday_morning_is_current_and_next_week(self):
+		self.check(datetime(2026, 9, 28, 9, 0), date(2026, 9, 28), date(2026, 10, 5))
+
+	def test_monday_evening_is_current_and_next_week(self):
+		self.check(datetime(2026, 9, 28, 18, 0), date(2026, 9, 28), date(2026, 10, 5))
+
+	def test_tuesday_is_current_week(self):
+		self.check(datetime(2026, 9, 29, 12, 0), date(2026, 9, 28))
 
 	def test_thursday_evening_is_current_week(self):
 		self.check(datetime(2026, 10, 1, 18, 0), date(2026, 9, 28))
@@ -101,8 +107,8 @@ class TargetWeekTest(unittest.TestCase):
 	def test_sunday_night_is_next_week(self):
 		self.check(datetime(2026, 10, 4, 23, 59), date(2026, 10, 5))
 
-	def test_monday_midnight_is_that_week(self):
-		self.check(datetime(2026, 10, 5, 0, 0), date(2026, 10, 5))
+	def test_monday_midnight_is_that_week_and_the_next(self):
+		self.check(datetime(2026, 10, 5, 0, 0), date(2026, 10, 5), date(2026, 10, 12))
 
 
 class LastSlotTest(unittest.TestCase):
