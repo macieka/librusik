@@ -39,6 +39,14 @@ def last_slot(now, hours):
 	return now.replace(hour = max(hours), minute = 0, second = 0, microsecond = 0) - timedelta(days = 1)
 
 
+def next_slot(now, hours):
+	today = [now.replace(hour = h, minute = 0, second = 0, microsecond = 0) for h in hours]
+	future = [slot for slot in today if slot > now]
+	if future:
+		return min(future)
+	return now.replace(hour = min(hours), minute = 0, second = 0, microsecond = 0) + timedelta(days = 1)
+
+
 def needs_fetch(last_ok, now, hours):
 	if not last_ok:
 		return True

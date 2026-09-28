@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from datetime import date, datetime
 
-from lib.timetable import MALFORMED, UNREACHABLE, TimetableError, delete_user, fetch_week, last_slot, load_week, needs_fetch, parse_week, save_week, target_week, user_dir
+from lib.timetable import MALFORMED, UNREACHABLE, TimetableError, delete_user, fetch_week, last_slot, load_week, needs_fetch, next_slot, parse_week, save_week, target_week, user_dir
 
 
 HOURS = [12, 18]
@@ -120,6 +120,26 @@ class LastSlotTest(unittest.TestCase):
 
 	def test_hours_in_any_order(self):
 		self.assertEqual(last_slot(datetime(2026, 9, 28, 13, 0), [18, 12]), datetime(2026, 9, 28, 12, 0))
+
+
+class NextSlotTest(unittest.TestCase):
+	def test_before_first_slot_is_same_day_first_slot(self):
+		self.assertEqual(next_slot(datetime(2026, 9, 28, 11, 59), HOURS), datetime(2026, 9, 28, 12, 0))
+
+	def test_exactly_on_a_slot_is_the_next_one(self):
+		self.assertEqual(next_slot(datetime(2026, 9, 28, 12, 0), HOURS), datetime(2026, 9, 28, 18, 0))
+
+	def test_between_slots(self):
+		self.assertEqual(next_slot(datetime(2026, 9, 28, 15, 30), HOURS), datetime(2026, 9, 28, 18, 0))
+
+	def test_exactly_on_last_slot_is_tomorrows_first(self):
+		self.assertEqual(next_slot(datetime(2026, 9, 28, 18, 0), HOURS), datetime(2026, 9, 29, 12, 0))
+
+	def test_after_last_slot_is_tomorrows_first(self):
+		self.assertEqual(next_slot(datetime(2026, 9, 28, 23, 0), HOURS), datetime(2026, 9, 29, 12, 0))
+
+	def test_hours_in_any_order(self):
+		self.assertEqual(next_slot(datetime(2026, 9, 28, 13, 0), [18, 12]), datetime(2026, 9, 28, 18, 0))
 
 
 class NeedsFetchTest(unittest.TestCase):

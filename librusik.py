@@ -16,7 +16,7 @@ from lib.api import librus
 from lib.api import Librus
 from lib.api import SessionManager
 from lib.utils import *
-from lib.timetable import TimetableError, UNREACHABLE, RETRY_SECONDS, target_week, needs_fetch, fetch_week, save_week, user_dir, delete_user
+from lib.timetable import TimetableError, UNREACHABLE, RETRY_SECONDS, target_week, needs_fetch, next_slot, fetch_week, save_week, user_dir, delete_user
 from shutil import copytree
 import atexit
 import apprise as apprise_lib
@@ -316,31 +316,35 @@ def tt_record(username, ok, error = None):
 
 
 async def fetch_timetable(username, now):
+	# outcome tells the poller how long to wait before trying this user again:
+	# "ok" clears any retry, "wait" waits for the next scheduled slot (a login
+	# that just failed, or never can succeed, would only fail again sooner),
+	# "retry" waits the usual 30 minutes.
 	user = database.get(username)
 	if not user:
-		return True
+		return "ok"
 	try:
 		directory = user_dir(TIMETABLE_DIR, username)
 	except ValueError:
 		tt_record(username, False, "Unsupported username.")
-		return False
+		return "wait"
 	week = target_week(now)
 	lib = Librus(SESSIONS.get(username))
 	try:
 		if not await lib.mktoken(user["l_login"], decrypt(user["l_passwd"])):
 			tt_record(username, False, "Librus login failed.")
-			return False
+			return "wait"
 		SESSIONS.save(username, lib.headers)
 		lessons = await fetch_week(lib, week)
 	except TimetableError as e:
 		tt_record(username, False, str(e))
-		return False
+		return "retry"
 	if username not in database:
 		# deleted while we were talking to Synergia, don't resurrect the directory
-		return True
+		return "ok"
 	save_week(directory, week, lessons, datetime.now().astimezone())
 	tt_record(username, True)
-	return True
+	return "ok"
 
 
 async def timetable_poller():
@@ -359,16 +363,24 @@ async def timetable_poller():
 					sem = asyncio.Semaphore(3)
 					async def run(u):
 						async with sem:
+							# set before the try so a crash while fetching (e.g. a disk
+							# or updatedb failure) still gets a retry scheduled below
+							outcome = "retry"
 							try:
-								ok = await fetch_timetable(u, now)
+								outcome = await fetch_timetable(u, now)
 							except:
 								notif_debug()
-								tt_record(u, False, UNREACHABLE)
-								ok = False
-						if ok:
-							TT_RETRY.pop(u, None)
-						else:
-							TT_RETRY[u] = time.time() + RETRY_SECONDS
+								try:
+									tt_record(u, False, UNREACHABLE)
+								except:
+									notif_debug()
+							finally:
+								if outcome == "ok":
+									TT_RETRY.pop(u, None)
+								elif outcome == "wait":
+									TT_RETRY[u] = next_slot(now, hours).timestamp()
+								else:
+									TT_RETRY[u] = time.time() + RETRY_SECONDS
 					await asyncio.gather(*[run(u) for u in due], return_exceptions = True)
 		except:
 			notif_debug()
