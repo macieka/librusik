@@ -129,6 +129,23 @@ def parse_week(timetable, week_start, classrooms, subjects, teachers):
 	return lessons
 
 
+async def fetch_week(lib, week_start):
+	"""Fetch and parse one week through a logged-in Librus client."""
+	week = await lib.get_data("Timetables?weekStart=%s" % week_start.isoformat())
+	rooms = await lib.get_data("Classrooms")
+	subjects = await lib.get_subjects()
+	teachers = await lib.get_teachers()
+	# a week with blank rooms or names would make calendar events flicker,
+	# so any missing piece fails the whole fetch
+	if week is None or rooms is None or subjects is None or teachers is None:
+		raise TimetableError(UNREACHABLE)
+	try:
+		classrooms = {int(room["Id"]): room["Symbol"] for room in rooms["Classrooms"]}
+	except (KeyError, TypeError, ValueError):
+		raise TimetableError(MALFORMED)
+	return parse_week(week, week_start, classrooms, subjects, teachers)
+
+
 def user_dir(base, username):
 	if not isinstance(username, str) or not USERNAME_RE.fullmatch(username):
 		raise ValueError("unsafe username: %r" % (username,))

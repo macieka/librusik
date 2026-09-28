@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from datetime import date, datetime
 
-from lib.timetable import MALFORMED, TimetableError, delete_user, last_slot, load_week, needs_fetch, parse_week, save_week, target_week, user_dir
+from lib.timetable import MALFORMED, UNREACHABLE, TimetableError, delete_user, fetch_week, last_slot, load_week, needs_fetch, parse_week, save_week, target_week, user_dir
 
 
 HOURS = [12, 18]
@@ -293,6 +293,57 @@ class StorageTest(unittest.TestCase):
 		delete_user(self.base, "nobody")
 		delete_user(self.base, "../etc")
 		self.assertTrue(os.path.isdir(self.base))
+
+
+class FakeLibrus:
+	def __init__(self, **overrides):
+		self.responses = {
+			"week": week_response(),
+			"rooms": {"Classrooms": [{"Id": i, "Name": s, "Symbol": s} for i, s in CLASSROOMS.items()]},
+			"subjects": SUBJECTS,
+			"teachers": TEACHERS,
+		}
+		self.responses.update(overrides)
+		self.calls = []
+
+	async def get_data(self, method):
+		self.calls.append(method)
+		if method.startswith("Timetables?weekStart="):
+			return self.responses["week"]
+		if method == "Classrooms":
+			return self.responses["rooms"]
+		raise AssertionError("unexpected request: %s" % method)
+
+	async def get_subjects(self):
+		return self.responses["subjects"]
+
+	async def get_teachers(self):
+		return self.responses["teachers"]
+
+
+class FetchWeekTest(unittest.IsolatedAsyncioTestCase):
+	async def test_success(self):
+		lib = FakeLibrus()
+		lessons = await fetch_week(lib, WEEK)
+		self.assertEqual(lessons, parse_week(week_response(), WEEK, CLASSROOMS, SUBJECTS, TEACHERS))
+		self.assertIn("Timetables?weekStart=2026-09-28", lib.calls)
+
+	async def test_any_request_failing_is_unreachable(self):
+		for failing in ["week", "rooms", "subjects", "teachers"]:
+			with self.subTest(failing = failing):
+				with self.assertRaises(TimetableError) as cm:
+					await fetch_week(FakeLibrus(**{failing: None}), WEEK)
+				self.assertEqual(str(cm.exception), UNREACHABLE)
+
+	async def test_malformed_classrooms(self):
+		with self.assertRaises(TimetableError) as cm:
+			await fetch_week(FakeLibrus(rooms = {"Nope": []}), WEEK)
+		self.assertEqual(str(cm.exception), MALFORMED)
+
+	async def test_malformed_week(self):
+		with self.assertRaises(TimetableError) as cm:
+			await fetch_week(FakeLibrus(week = {"Pages": {}}), WEEK)
+		self.assertEqual(str(cm.exception), MALFORMED)
 
 
 if __name__ == "__main__":
