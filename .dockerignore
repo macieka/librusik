@@ -5,3 +5,6 @@ __pycache__
 *.pyo
 data/
 *.log
+lib/api/probe_out/
+lib/api/probe_timetable.py
+.superpowers/
