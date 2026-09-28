@@ -175,6 +175,8 @@ def save_week(directory, week_start, lessons, fetched_at):
 	try:
 		with open(tmp, "w", encoding = "utf-8") as f:
 			json.dump(snapshot, f, ensure_ascii = False, indent = 2)
+			f.flush()
+			os.fsync(f.fileno())
 		# a crash mid-write must never leave a truncated week in place
 		os.replace(tmp, path)
 	except:
