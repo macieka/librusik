@@ -20,9 +20,6 @@ UNREACHABLE = "Could not reach Synergia."
 USERNAME_RE = re.compile("[a-z0-9]+")
 
 
-
-
-
 class TimetableError(Exception):
 	"""A fetch failed; str(e) is what ends up in tt_last_error."""
 
