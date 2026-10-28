@@ -439,6 +439,11 @@ def demo_err(user):
 	return False
 
 
+def synergia_login_error(librus):
+	if librus.credentials_rejected:
+		return "Wrong Synergia credentials."
+	return "Couldn't reach Synergia. Try again in a moment."
+
 async def mkaccount(data):
 	global database
 	if config["max_users"] <= len(database):
@@ -486,7 +491,7 @@ async def mkaccount(data):
 		updatedb()
 		SESSIONS.updatedb(database)
 		return True
-	return "Wrong Synergia credentials."
+	return synergia_login_error(librus)
 
 async def scaccount(data):
 	global database
@@ -510,7 +515,7 @@ async def scaccount(data):
 		updatedb()
 		SESSIONS.updatedb(database)
 		return True
-	return "Wrong Synergia credentials."
+	return synergia_login_error(librus)
 
 async def api(request):
 	global database, LAST_SEEN_PEPS
