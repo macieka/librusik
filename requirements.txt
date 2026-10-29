@@ -2,3 +2,4 @@ aiohttp==3.13.2
 yarl==1.24.5
 cryptography==46.0.3
 beautifulsoup4==4.14.3
+apprise==1.9.4

@@ -4,6 +4,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
+
+# without tzdata the container is stuck on UTC, which shifts the notification
+# quiet hours and every timestamp shown to users - run with e.g. -e TZ=Europe/Warsaw
+RUN apk add --no-cache tzdata
+
 RUN mkdir -p /app/data
 RUN mkdir -p /app/data/profile_pics
 
